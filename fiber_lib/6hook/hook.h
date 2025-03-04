@@ -10,14 +10,14 @@
 
 namespace sylar{
 
-bool is_hook_enable();
-void set_hook_enable(bool flag);
+bool is_hook_enable(); // 用于判断钩子功能是否启用
+void set_hook_enable(bool flag); // 用于设置钩子功能的启用或禁用状态
 
 }
 
-extern "C"
+extern "C" // 确保正确调用C库中的系统调用，C++编译器不会对这些函数名进行修饰 
 {
-	// track the original version
+	// C函数原型声明与重定向
 	typedef unsigned int (*sleep_fun) (unsigned int seconds);
 	extern sleep_fun sleep_f;
 
@@ -83,7 +83,7 @@ extern "C"
     extern setsockopt_fun setsockopt_f;
 
     // function prototype -> 对应.h中已经存在 可以省略
-	// sleep function 
+	// sleep function 函数重定义
 	unsigned int sleep(unsigned int seconds);
 	int usleep(useconds_t usce);
 	int nanosleep(const struct timespec* req, struct timespec* rem);

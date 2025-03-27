@@ -23,21 +23,27 @@ void Fiber::SetThis(Fiber *f)
 	t_fiber = f;
 }
 
-// 首先运行该函数创建主协程
+// 首先运行该函数初始化当前线程的协程功能，即创建主协程（内部调用了 Fiber 的无参构造函数）
 std::shared_ptr<Fiber> Fiber::GetThis()
-{	// 如果t_fiber已经被初始化，则直接返回当前协程的shared_ptr，作为主协程
+{	// 如果 t_fiber 已经被初始化，则直接返回当前协程的自身指针，作为主协程
 	if(t_fiber)
 	{	
-		return t_fiber->shared_from_this();
+		return t_fiber->shared_from_this(); // 安全地返回 this 指针
 	}
-	// 如果t_fiber尚未初始化，说明当前没有主协程，或者主协程尚未创建 
-	// 在这种情况下，创建一个新的Fiber对象，并使用std::shared_ptr管理它，这个新的Fiber对象就是主协程
+
+	// 如果 t_fiber 尚未初始化，说明当前主协程尚未创建 
+	// 这时需要创建一个新的 Fiber 对象充当主协程，并使用 shared_ptr 管理它
 	std::shared_ptr<Fiber> main_fiber(new Fiber());
 	t_thread_fiber = main_fiber;
-	t_scheduler_fiber = main_fiber.get(); // 除非主动设置,否则主协程默认为调度协程
+	t_scheduler_fiber = main_fiber.get(); // 除非主动设置，否则主协程默认充当调度协程
+	/**
+	 * get() 返回的是 shared_ptr<Fiber> 所管理的原始指针，而不是 shared_ptr<Fiber> 本身
+	 * 而 t_thread_fiber 的类型本来就是 shared_ptr<Fiber>，所以它可以直接赋值，不需要 get()
+	 */
 	
-	// 用于判断当前协程是否为主协程，是则继续执行，否则程序终止
-	assert(t_fiber == main_fiber.get()); // 断言检查的目的是确保在没有其他协程运行时，主协程是唯一有效的协程 
+	// 断言检查：判断当前协程是否为主协程，是则继续执行，否则程序终止
+	assert(t_fiber == main_fiber.get()); // 确保在没有其他协程运行时，主协程是唯一有效的协程 
+
 	return t_fiber->shared_from_this();
 }
 
@@ -58,53 +64,54 @@ uint64_t Fiber::GetFiberId()
 }
 
 // 创建主协程，设置状态，初始化上下文，并分配ID 
-Fiber::Fiber() // 只能被GetThis()调用，不允许类外部调用，因为定义为private
+Fiber::Fiber() // 定义为 private，只能被 GetThis()调用，不允许类外调用
 {
-	SetThis(this); // 在GetThis中使用了无参的Fiber来构造t_fiber
-	m_state = RUNNING; // 设置协程的状态为可运行
+	SetThis(this); // 将新创建的 fiber 对象设置为 t_fiber 
+	m_state = RUNNING; // 设置协程的状态为运行（因为是主协程，直接跑起来即可）
 	
+	// 若返回值为0，表示 getcontext() 成功地保存了当前协程的上下文
 	if(getcontext(&m_ctx))
 	{
 		std::cerr << "Fiber() failed\n";
 		pthread_exit(NULL);
 	}
 	
-	m_id = s_fiber_id++; // 分配协程ID，从0开始，用完+1
-	s_fiber_count ++; // 活跃的协程数量+1
+	m_id = s_fiber_id++; // 从0开始分配协程ID 
+	s_fiber_count++; // 活跃的协程数量+1
 	if(debug) std::cout << "Fiber(): main id = " << m_id << std::endl;
 }
 
-// 创建一个新协程，初始化回调函数、栈的大小和状态，分配栈空间，并通过make修改上下文
-// 当set或swap激活上下文m_ctx时，会执行make的参2：MainFunc函数
+// 创建一个新协程并指定其入口函数、栈的大小和是否受调度，初始化 ucontext_t上下文，分配栈空间，并通过 make 将上下文与入口函数绑定
+// 当 set 或 swap 激活上下文 m_ctx 时，会执行该入口函数
 Fiber::Fiber(std::function<void()> cb, size_t stacksize, bool run_in_scheduler):
 m_cb(cb), m_runInScheduler(run_in_scheduler)
 {
-	m_state = READY; // 初始化状态
+	m_state = READY; // 初始化状态为就绪
 
 	// 分配协程栈空间
 	m_stacksize = stacksize ? stacksize : 128000;
 	m_stack = malloc(m_stacksize);
 
-	if(getcontext(&m_ctx))
+	if(getcontext(&m_ctx)) // 存储协程上下文
 	{
 		std::cerr << "Fiber(std::function<void()> cb, size_t stacksize, bool run_in_scheduler) failed\n";
 		pthread_exit(NULL);
 	}
 	
-	m_ctx.uc_link = nullptr; // 这里因为没有设置后继，所以在运行完mainfunc后协程退出，会调用一次yield返回主协程 
+	m_ctx.uc_link = nullptr; // 因为没有设置后继，所以在运行完该协程入口函数后，协程退出并调用一次 yield 返回主协程 
 	m_ctx.uc_stack.ss_sp = m_stack;
 	m_ctx.uc_stack.ss_size = m_stacksize;
-	makecontext(&m_ctx, &Fiber::MainFunc, 0);
+	makecontext(&m_ctx, &Fiber::MainFunc, 0); // 将上下文与入口函数绑定
 	
 	m_id = s_fiber_id++;
-	s_fiber_count ++;
+	s_fiber_count++;
 	if(debug) std::cout << "Fiber(): child id = " << m_id << std::endl;
 }
 
 Fiber::~Fiber()
 {
 	s_fiber_count--; // 活跃的协程数量-1
-	if(m_stack)
+	if(m_stack) // 有独立栈，说明是子协程
 	{
 		free(m_stack);
 	}

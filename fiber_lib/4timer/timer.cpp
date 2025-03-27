@@ -149,7 +149,7 @@ void TimerManager::addTimer(std::shared_ptr<Timer> timer)
 
 /*
 为什么需要用 weak ptr 转换成 share ptr？
-weak ptr是一种弱引用，不会增加对象的引用计数，通过 std::weak_ptr
+weak ptr 是一种弱引用，不会增加对象的引用计数，通过 std::weak_ptr
 你可以持有对一个对象的非所有权引用，这在避免循环引用和管理对象生命周期时非常有用 
 */
 static void OnTimer(std::weak_ptr<void> weak_cond, std::function<void()> cb) // 如果条件存在 -> 执行cb()

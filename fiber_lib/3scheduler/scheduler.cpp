@@ -237,7 +237,7 @@ void Scheduler::idle()
 	}
 }
 
-// 该函数的目的是为了判断调度器是否退出，在stop函数中如果stopping()返回为true代表调度器已经退出，则直接返回return，不做任何操作
+// 该函数的目的是为了判断调度器是否退出，在stop函数中如果 stopping()返回为true代表调度器已经退出，则直接返回return，不做任何操作
 bool Scheduler::stopping() 
 {
 	// 使用互斥锁的目的是m_tasks，m_activeThreadCount会被多线程竞争所以需要互斥锁来保护资源的访问

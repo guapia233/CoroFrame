@@ -154,7 +154,7 @@ void Fiber::resume()
 			pthread_exit(NULL);
 		}		
 	}
-	// 如果m_runInScheduler为false，说明当前协程不参与调度器的调度，而是由主线程管理，此时会将执行权切换到主线程的协程(t_thread_fiber)
+	// 如果 m_runInScheduler 为false，说明当前协程不参与调度器的调度，而是由主线程管理，此时会将执行权切换到主线程的协程(t_thread_fiber)
 	else
 	{
 		SetThis(this);

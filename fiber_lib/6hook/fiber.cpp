@@ -25,7 +25,7 @@ void Fiber::SetThis(Fiber *f)
 
 // 首先运行该函数初始化当前线程的协程功能，即创建主协程（内部调用了 Fiber 的无参构造函数）
 std::shared_ptr<Fiber> Fiber::GetThis()
-{	// 如果 t_fiber 已经被初始化，则直接返回当前协程的自身指针，作为主协程
+{	// 如果 t_fiber 已经被初始化，则直接返回正在运行的协程的自身指针 
 	if(t_fiber)
 	{	
 		return t_fiber->shared_from_this(); // 安全地返回 this 指针
@@ -111,15 +111,14 @@ m_cb(cb), m_runInScheduler(run_in_scheduler)
 Fiber::~Fiber()
 {
 	s_fiber_count--; // 活跃的协程数量-1
-	if(m_stack) // 有独立栈，说明是子协程
+	if(m_stack) // 有独立栈，说明是子协程（关于主协程的析构还没实现）
 	{
 		free(m_stack);
 	}
 	if(debug) std::cout << "~Fiber(): id = " << m_id << std::endl;	
 }
  
-// 重置协程的回调函数，并重新设置上下文，将协程从TERM状态重置为READY、
-// 目的：复用一个已经终止的协程对象，从而避免频繁创建和销毁对象带来的开销
+// 复用一个已终止的协程对象：重置协程的入口函数，重新设置上下文，将协程状态从 TERM 改为 READY，从而避免频繁创建和销毁对象带来的开销
 void Fiber::reset(std::function<void()> cb)
 {
 	assert(m_stack != nullptr && m_state == TERM); 
@@ -139,29 +138,26 @@ void Fiber::reset(std::function<void()> cb)
 	makecontext(&m_ctx, &Fiber::MainFunc, 0);
 }
 
-// 将协程的状态设置为running，并恢复协程的执行
-// 如果m_runInScheduler为true，则将上下文切换到调度协程；否则，切换到主线程的协程
+// 将协程的状态设置为 RUNNING，并恢复协程的执行
 void Fiber::resume()
 {
-	assert(m_state==READY); // 使用断言确保当前协程的状态是READY，即协程已经准备好执行
+	assert(m_state==READY); // 使用断言确保当前协程的状态是 READY，即协程已经准备好执行
 	
 	m_state = RUNNING;
 
-	// 下面的切换类似于非对称的协程切换模型，即一个协程的执行会交给另一个协程来处理 
-
-	// 如果m_runInScheduler为true，说明当前协程参与调度器的调度 
+	// 如果 m_runInScheduler 为 true，说明该协程（即调用 resume 方法的协程）受调度协程的调度，则由调度协程 t_scheduler_fiber 切换到该协程恢复执行
 	if(m_runInScheduler) 
 	{
-		SetThis(this); // 将该协程设置为"当前执行的协程"
-		// 下面是进行上下文切换的关键操作，swapcontext会保存当前协程的上下文(m_ctx)并切换到指定协程的
-		// 上下文(t_scheduler_fiber->m_ctx)。如果 m_runInScheduler为true，则切换到调度协程(t_scheduler_fiber)
+		SetThis(this); // 将该协程赋值给变量 t_fiber，方便输出调试信息
+
+		// swapcontext 会保存当前协程的上下文 t_scheduler_fiber->m_ctx，并切换到指定协程的上下文 m_ctx 
 		if(swapcontext(&(t_scheduler_fiber->m_ctx), &m_ctx))
 		{
 			std::cerr << "resume() to t_scheduler_fiber failed\n";
 			pthread_exit(NULL);
 		}		
 	}
-	// 如果m_runInScheduler为false，说明当前协程不参与调度器的调度，而是由主线程管理，此时会将执行权切换到主线程的协程(t_thread_fiber)
+	// 如果 m_runInScheduler 为 false，说明该协程不受调度协程的调度，此时会将执行权从主协程 t_thread_fiber 切换到该协程
 	else
 	{
 		SetThis(this);
@@ -173,7 +169,7 @@ void Fiber::resume()
 	}
 }
 
-// 让出协程的执行权
+// 让出该协程的执行权
 void Fiber::yield()
 {
 	assert(m_state==RUNNING || m_state==TERM);
@@ -185,7 +181,7 @@ void Fiber::yield()
 
 	if(m_runInScheduler)
 	{
-		SetThis(t_scheduler_fiber); // 将当前协程设置为调度协程，这样后续操作会使用调度协程的上下文 
+		SetThis(t_scheduler_fiber);   
 		if(swapcontext(&m_ctx, &(t_scheduler_fiber->m_ctx))) // 将当前协程的执行权交给调度协程  
 		{
 			std::cerr << "yield() to to t_scheduler_fiber failed\n";
@@ -194,7 +190,7 @@ void Fiber::yield()
 	}
 	else
 	{
-		SetThis(t_thread_fiber.get()); // 将当前协程设置为主协程 
+		SetThis(t_thread_fiber.get());  
 		if(swapcontext(&m_ctx, &(t_thread_fiber->m_ctx))) // 将当前协程的执行权交给主协程  
 		{
 			std::cerr << "yield() to t_thread_fiber failed\n";
@@ -203,11 +199,11 @@ void Fiber::yield()
 	}	
 }
 
-// 协程的入口函数，在协程恢复执行时会调用这个函数
-// 通过封装入口函数，可以实现协程在结束时自动执行yield操作
+// 协程入口函数的真正执行地，在协程恢复执行时会调用这个函数
+// 通过封装入口函数，可以实现协程在结束时自动执行 yield 操作
 void Fiber::MainFunc()
 {
-	std::shared_ptr<Fiber> curr = GetThis(); // GetThis()的shared_from_this方法让引用计数加1
+	std::shared_ptr<Fiber> curr = GetThis(); // GetThis()的 shared_from_this 方法让引用计数+1
 	assert(curr != nullptr);
 
 	curr->m_cb(); // 执行协程的回调函数
@@ -215,9 +211,9 @@ void Fiber::MainFunc()
 	curr->m_state = TERM; // 表示协程已经执行完毕，生命周期结束
 
 	// 运行完毕 -> 让出执行权
-	auto raw_ptr = curr.get(); // 获取当前协程的裸指针
-	curr.reset(); // 这里留意一个细节：重置的cb回调函数希望它指向nullptr，因为方便其他线程再次调用这个协程对象
-	raw_ptr->yield(); // 调用协程的yield函数，让出当前协程的执行权
+	auto raw_ptr = curr.get(); // 获取当前协程对象的裸指针
+	curr.reset(); // 将入口函数 m_cb 指向 nullptr，以便其他线程可以再次复用这个协程对象
+	raw_ptr->yield(); // 调用协程的 yield 函数，让出当前协程的执行权
 }
 
 }

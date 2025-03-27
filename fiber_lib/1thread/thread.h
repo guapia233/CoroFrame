@@ -5,7 +5,7 @@
 #include <condition_variable>
 #include <functional>     
 
-namespace sylar //  将后续的类、函数等代码封装在 sylar 这个命名空间下，避免不同模块下的同名冲突
+namespace sylar // 将后续的类、函数等代码封装在 sylar 这个命名空间下，避免不同模块下的同名冲突
 {
 
 // 用于线程方法间的同步

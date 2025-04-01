@@ -13,9 +13,9 @@ namespace sylar {
 class Scheduler
 {
 public:
-	// threads指定线程池的线程数量，use_caller指定是否将主线程作为工作线程，name指定调度器的名称
+	// threads 指定线程池的线程数量，use_caller 指定是否将主线程作为工作线程，name 指定调度器的名称
 	Scheduler(size_t threads = 1, bool use_caller = true, const std::string& name="Scheduler");
-	virtual ~Scheduler(); // 防止出现资源泄露，基类指针删除派生类对象时不完全销毁的情况
+	virtual ~Scheduler(); // 虚析构：防止出现资源泄露，基类指针删除派生类对象时不完全销毁的情况
 	
 	const std::string& getName() const {return m_name;} // 获取调度器的名称
 
@@ -28,26 +28,31 @@ protected:
 	void SetThis();
 	
 public:	
-	// 添加任务到任务队列
     template <class FiberOrCb> // Fiberorcb是调度任务类型，可以是协程对象或函数指针
+	
+	// 添加任务到任务队列
     void scheduleLock(FiberOrCb fc, int thread = -1) 
     {
     	bool need_tickle; // 标记任务队列是否为空，从而判断是否需要唤醒线程
+
 		// 用大括号的作用是缩短锁的作用域
-		//std::lock_guard是一个RAII机制的锁，在构造时会自动加锁，当lock变量离开作用域后，它的析构函数会自动释放锁
     	{
+			// lock_guard 是 C++11 标准库提供的互斥锁 RAII 封装工具之一，用于实现互斥访问
+			// 在构造时会自动加锁，当 lock 变量离开作用域后，它的析构函数会自动释放锁
     		std::lock_guard<std::mutex> lock(m_mutex);
-    		// empty ->  all thread is idle -> need to be waken up
+
+    		// 任务队列为空时，所有调度线程可能都在 idle() 休眠，当有新任务加入时，需要 tickle() 唤醒线程，让它们继续执行任务
     		need_tickle = m_tasks.empty();
-	        // 创建Task的任务对象
+
+	        // 创建 Task 的任务对象
 	        ScheduleTask task(fc, thread);
-	        if (task.fiber || task.cb) // 存在就加入  
+	        if (task.fiber || task.cb) // task 存在协程对象或函数指针就加入  
 	        {
 	            m_tasks.push_back(task);
 	        }
     	}
     	
-    	if(need_tickle) // 任务队列原本为空，但新任务来了 -> 唤醒线程
+    	if(need_tickle) // 如果任务队列原本为空，但新任务来了，需要唤醒线程
     	{
     		tickle();
     	}
@@ -65,14 +70,13 @@ protected:
 	// 线程函数
 	virtual void run();
 
-	// 空闲协程函数，无任务调度时执行idle协程
+	// 空闲协程函数，无任务调度时执行 idle() 
 	virtual void idle();
 	
 	// 是否可以关闭
 	virtual bool stopping();
-
-	// 返回是否有空闲线程
-	// 当调度协程进入idle时空闲线程数+1，从idle协程返回时空闲线程数-1
+ 
+	// 返回是否有空闲线程，当调度协程进入 idle 时空闲线程数+1，从 idle 协程返回时空闲线程数-1
 	bool hasIdleThreads() {return m_idleThreadCount>0;}
 
 private:
@@ -81,7 +85,7 @@ private:
 	{
 		std::shared_ptr<Fiber> fiber;
 		std::function<void()> cb;
-		int thread; // 指定任务需要运行的线程ID
+		int thread; // 指定该任务被运行在哪个线程ID
 
 		ScheduleTask()
 		{
@@ -98,7 +102,7 @@ private:
 
 		ScheduleTask(std::shared_ptr<Fiber>* f, int thr)
 		{
-			fiber.swap(*f); //将内容转移也就是指针内部的转移和上面的赋值不同，引用计数不会增加
+			fiber.swap(*f); // 和上面直接赋值不同，引用计数不会增加
 			thread = thr;
 		}	
 
@@ -125,7 +129,7 @@ private:
 private:
 	// 调度器的名称
 	std::string m_name;
-	// 互斥锁 -> 保护任务队列
+	// 互斥锁，保护任务队列
 	std::mutex m_mutex;
 	// 线程池，存储初始化好的线程
 	std::vector<std::shared_ptr<Thread>> m_threads;
@@ -142,9 +146,9 @@ private:
 
 	// 主线程是否用作工作线程
 	bool m_useCaller;
-	// 如果是 -> 需要额外创建调度协程
+	// 如果是，需要额外创建调度协程
 	std::shared_ptr<Fiber> m_schedulerFiber;
-	// 如果是 -> 记录主线程的线程ID
+	// 如果是，记录主线程的线程ID
 	int m_rootThread = -1;
 	// 是否正在关闭
 	bool m_stopping = false;	

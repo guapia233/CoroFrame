@@ -87,7 +87,7 @@ private:
     bool detectClockRollover();
 
 private:
-    std::shared_mutex m_mutex;
+    std::shared_mutex m_mutex; // 读写锁
 
     // 时间堆：存储所有的 Timer 对象，并使用 Timer::Comparator 进行排序，确保最早超时的 Timer 在最前面（堆顶）
     std::set<std::shared_ptr<Timer>, Timer::Comparator> m_timers;
@@ -96,7 +96,7 @@ private:
     // m_tickled 是一个标志，用于指示是否需要在定时器插入到时间堆的前端时触发额外的处理操作，例如唤醒一个等待的线程或进行其他管理操作
     bool m_tickled = false;
 
-    // 上一次检查定时器时的系统绝对时间，用于检测系统时间是否发生了回退
+    // 上一次检查定时器管理器时的系统绝对时间，用于检测系统时间是否发生了回退
     std::chrono::time_point<std::chrono::system_clock> m_previouseTime;
 };
 

@@ -431,7 +431,7 @@ void IOManager::idle()
         {
             epoll_event& event = events[i]; // 获取第i个 epollevent 
 
-            // tickle 函数会唤醒 epoll_wait 并写入管道，因此要循环读数据直至返回-1
+            // 先处理可能发生的 tickle 函数，它会唤醒 epoll_wait 并写入管道，因此要循环读数据直至返回-1
             if(event.data.fd == m_tickleFds[0]) 
             {
                 uint8_t dummy[256];

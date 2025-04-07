@@ -19,7 +19,7 @@ public:
 
 private:
     // 每个 socket fd 都对应一个 Fdcontext，包括 fd 的值，fd 上的事件以及 fd 的读写事件的上下文
-    struct FdContext // 文件描述符的事件上下文 
+    struct FdContext // 文件描述符的事件上下文（注意这里的上下文不是指协程的那种上下文，而是相当于关联信息） 
     {
         // 具体事件的上下文 
         struct EventContext 

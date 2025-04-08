@@ -30,6 +30,7 @@ std::shared_ptr<Fiber> Fiber::GetThis()
 	{	
 		return t_fiber->shared_from_this();
 	}
+	
 	// 如果t_fiber尚未初始化，说明当前没有主协程，或者主协程尚未创建 
 	// 在这种情况下，创建一个新的Fiber对象，并使用std::shared_ptr管理它，这个新的Fiber对象就是主协程
 	std::shared_ptr<Fiber> main_fiber(new Fiber());

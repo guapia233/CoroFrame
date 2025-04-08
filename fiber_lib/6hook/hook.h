@@ -10,19 +10,18 @@
 
 namespace sylar{
 
-bool is_hook_enable(); // 用于判断钩子功能是否启用
-void set_hook_enable(bool flag); // 用于设置钩子功能的启用或禁用状态
+bool is_hook_enable(); // hook 功能是否启用
+void set_hook_enable(bool flag); // 用于设置 hook 功能的启用或禁用状态
 
 }
 
-extern "C" // 确保正确调用C库中的系统调用，C++编译器不会对这些函数名进行修饰 
+extern "C" // 确保正确调用C库中的系统调用，C++ 编译器不会对这些函数名进行修饰 
 {
 	// C函数原型声明与重定向
-	typedef unsigned int (*sleep_fun) (unsigned int seconds);
-	extern sleep_fun sleep_f;
+	typedef unsigned int (*sleep_fun) (unsigned int seconds); // 定义了一个返回值是 unsigned int，参数类型是 unsigned int 的函数指针
+	extern sleep_fun sleep_f; // 声明了一个外部变量，类型是 sleep fun，变量名为 sleep_f 
 
 	typedef int (*usleep_fun) (useconds_t usec);
-
 	extern usleep_fun usleep_f;
 
 	typedef int (*nanosleep_fun) (const struct timespec* req, struct timespec* rem);
@@ -82,8 +81,9 @@ extern "C" // 确保正确调用C库中的系统调用，C++编译器不会对�
     typedef int (*setsockopt_fun) (int sockfd, int level, int optname, const void *optval, socklen_t optlen);
     extern setsockopt_fun setsockopt_f;
 
-    // function prototype -> 对应.h中已经存在 可以省略
-	// sleep function 函数重定义
+    // 函数重定义 function prototype -> 对应.h中已经存在 可以省略
+	
+	// sleep function 
 	unsigned int sleep(unsigned int seconds);
 	int usleep(useconds_t usce);
 	int nanosleep(const struct timespec* req, struct timespec* rem);

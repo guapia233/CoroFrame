@@ -6,8 +6,7 @@
 #include "fd_manager.h"
 #include <string.h>
 
-// 宏 HOOK_FUN(XX) 是一个宏展开机制，通过将XX依次应用于宏定义中的每一个函数名称来生成一系列代码
-// 可以有效减少重复代码，提高代码的可读性和维护性 
+// 宏 HOOK_FUN(XX) 是一个宏展开机制，通过将 XX 依次应用于宏定义中的每一个函数名称来生成一系列代码，可以有效减少重复代码，提高代码的可读性和维护性 
 #define HOOK_FUN(XX) \
     XX(sleep) \
     XX(usleep) \
@@ -33,91 +32,89 @@
 
 namespace sylar{
 
-// 使用线程局部变量，每个线程都会判断一下是否启用了钩子
-static thread_local bool t_hook_enable = false; // 当前线程是否启用了钩子功能，初始值为false，即钩子功能默认关闭
+// 使用线程局部变量，每个线程都会判断一下是否启用了 hook
+static thread_local bool t_hook_enable = false; // 当前线程是否启用了 hook 功能，初始值为 false，即 hook 功能默认关闭
 
-// 返回当前线程的钩子功能是否启用
+// 返回当前线程的 hook 功能是否启用
 bool is_hook_enable()
 {
     return t_hook_enable;
 }
 
-// 设置当前线程的钩子功能是否启用 
+// 设置当前线程的 hook 功能启用状态 
 void set_hook_enable(bool flag)
 {
     t_hook_enable = flag;
 }
 
+// hook 初始化
 void hook_init()
 {
-	static bool is_inited = false; // 通过一个静态变量来确保 hook init()只初始化一次，防止重复初始化 
+	static bool is_inited = false; // 通过一个静态变量来确保 hook init() 只初始化一次，防止重复初始化 
 	if(is_inited)
 	{
 		return;
 	}
-
 	is_inited = true;
 
-
-// assignment -> sleep_f = (sleep_fun)dlsym(RTLD_NEXT, "sleep"); -> dlsym -> fetch the original symbols/function
+// dlsym + RTLD_NEXT 用于绕过 hook，调用原始系统调用
 #define XX(name) name ## _f = (name ## _fun)dlsym(RTLD_NEXT, #name);
 	HOOK_FUN(XX)
-#undef XX // 提前取消了XX的作用域
+#undef XX // 提前取消 XX 的作用域
 }
 
-// static variable initialisation will run before the main function
 struct HookIniter
 {
 	HookIniter() // 钩子函数
 	{
-		hook_init(); // 初始化hook，让原始调用绑定到宏展开的函数指针中
+		hook_init(); // 初始化 hook，让原始调用绑定到宏展开的函数指针中
 	}
 };
 
-// 定义了一个静态的 HookIniter 实例，由于静态变量的初始化发生在main()函数之前，所以hook_init()会在程序开始时被调用，从而初始化钩子函数
+// 定义一个静态的 HookIniter 实例，由于静态变量的初始化发生在 main 函数之前，所以 hook_init() 会在程序开始时被调用，从而初始化钩子函数
 static HookIniter s_hook_initer;
 
 } // end namespace sylar
 
-// 跟踪定时器的状态，具体来说，它有一个 cancelled 成员变量，用于表示定时器是否已经被取消 
+
+// 跟踪定时器的状态，cancelled 成员变量用于表示定时器是否已经被取消 
 struct timer_info 
 {
     int cancelled = 0;
 };
 
-/*
-do_io主要是判断全局钩子是否启用，并且根据文件描述符是否有效和是否设置了非阻塞来选择是否使用原始系统调用
-通过超时管理和取消操作来判断，如果IO操作资源不足，会添加一个事件监听器来等待资源可用并让出协程
-同时，如果有超时设置，还会启动一个条件计时器来取消事件，超时事件主要是处理当超时时间到达后时间还没处理就处理它
-然后添加一个事件读或写事件来监听相应的事件调用协程处理，所以do_io是对read等系统调用的封装利用实现非阻塞
-协程和超时机制保证了可靠性和健壮性，具体在于如果出现资源暂时不可用，我们就必须利用添加事件监听将其通过yield挂起
-然后使用超时或者资源读或写事件产生就会触发tickle信号唤醒epoll，将任务放入到调度器中执行，然后取消相应定时器，这就是do_io函数的作用 
-*/
-
-// 读写函数的通用模板：自定义的系统调用最后都将其参数放入do_io模板来做统一的规范化
+/**
+ * 自定义的系统调用都要将其参数放入 do_io 模板来做统一的规范化处理：
+ * do_io 主要是判断全局 hook 是否启用，并且根据文件描述符是否有效和是否设置了非阻塞来选择是否使用原始系统调用
+ * 通过超时管理和取消操作来判断，如果 IO 操作资源不足，会添加一个事件监听器来等待资源可用并让出协程
+ * 同时，如果有超时设置，还会启动一个条件计时器来取消事件，超时事件主要是处理当超时时间到达后还没处理的情况
+ * 然后添加一个读或写事件来监听相应的事件调用协程处理，所以 do_io 是对 read 等系统调用的封装以实现非阻塞
+ * 协程和超时机制保证了可靠性和健壮性，具体在于如果出现资源暂时不可用，我们就注册新事件监听，然后主动 yield 让出执行权，
+ * 当定时器超时或者资源满足就会唤醒 epoll_wait，将任务放入到调度器中执行，然后取消相应定时器，这就是 do_io 函数的作用 
+ */
 template<typename OriginFun, typename... Args>
 static ssize_t do_io(int fd, OriginFun fun, const char* hook_fun_name, uint32_t event, int timeout_so, Args&&... args) 
 {
-    if(!sylar::t_hook_enable) // 如果全局钩子功能未启用，则直接调用原始的I/O函数
+    if(!sylar::t_hook_enable) // 如果全局 hook 功能未启用，则直接调用原始系统调用
     {
         return fun(fd, std::forward<Args>(args)...);
     }
 
-    // 获取与文件描述符fd相关联的上下文ctx，如果上下文不存在，则直接调用原始的I/O函数
-    std::shared_ptr<sylar::FdCtx> ctx = sylar::FdMgr::GetInstance()->get(fd); // FdMgr：singleton<FdManager>
+    // 获取与文件描述符 fd 相关联的上下文对象 FdCtx，如果上下文不存在，则直接调用原始系统调用
+    std::shared_ptr<sylar::FdCtx> ctx = sylar::FdMgr::GetInstance()->get(fd);  
     if(!ctx) 
     {
         return fun(fd, std::forward<Args>(args)...);
     }
 
-    // 如果文件描述符已经关闭，设置 errno 为 EBADF 并返回-1 
+    // 如果 FdCtx 已经关闭，设置 errno 为 EBADF 并返回-1 
     if(ctx->isClosed()) 
     {
         errno = EBADF; // 表示文件描述符无效或已经关闭
         return -1;
     }
 
-    // 如果文件描述符不是一个socket或者用户设置了非阻塞模式，则直接调用原始的I/O操作函数
+    // 如果文件描述符不是一个 socket 或者用户已经设置了非阻塞模式，则直接调用原始系统调用
     if(!ctx->isSocket() || ctx->getUserNonblock()) 
     {
         return fun(fd, std::forward<Args>(args)...);
@@ -128,49 +125,43 @@ static ssize_t do_io(int fd, OriginFun fun, const char* hook_fun_name, uint32_t 
     // timer condition
     std::shared_ptr<timer_info> tinfo(new timer_info);
 
-// 调用原始的I/O函数，如果由于系统中断(EINTR)导致操作失败，函数会重试
+// 调用原始系统调用，如果由于系统中断(EINTR)导致操作失败，函数会重试
 retry:
-	// run the function
     ssize_t n = fun(fd, std::forward<Args>(args)...);
     
-    // EINTR -> Operation interrupted by system -> retry
     while(n == -1 && errno == EINTR) 
     {
         n = fun(fd, std::forward<Args>(args)...);
     }
     
-    // 0.resource was temporarily unavailable -> retry until ready 
-    // 如果I/O操作因为资源暂时不可用(EAGAIN)而失败，函数会添加一个事件监听器来等待资源可用
+    // 0.如果 I/O 操作因为资源暂时不可用(EAGAIN)而失败，函数会添加一个事件监听器来等待资源可用
     // 同时，如果有超时设置，还会启动一个条件计时器来取消事件
     if(n == -1 && errno == EAGAIN) 
     {
         sylar::IOManager* iom = sylar::IOManager::GetThis();
-        // timer
         std::shared_ptr<sylar::Timer> timer;
         std::weak_ptr<timer_info> winfo(tinfo);
 
-        // 1.timeout has been set -> add a conditional timer for canceling this operation
-        // 如果执行的read等函数在 FdManager 管理的 FdCtx 中设置了超时时间，就添加 addConditionTimer 事件
+        // 1.如果执行的 read 等函数在 FdManager 管理的 FdCtx 中设置了超时时间，就通过 addConditionTimer 创建条件定时器
         if(timeout != (uint64_t)-1) // 检查是否设置了超时时间
         {
             timer = iom->addConditionTimer(timeout, [winfo, fd, iom, event]() 
             {
                 auto t = winfo.lock();
-                if(!t || t->cancelled) // 如果 timer_info 对象已被释放(!t)，或者操作已被取消(t->cancelled非0)，则直接返回
+                if(!t || t->cancelled) // 如果 timer_info 对象已被释放，或者操作已被取消，则直接返回
                 {
                     return;
                 }
-                t->cancelled = ETIMEDOUT; // 如果超时时间到达并且事件尚未被处理(即cancelled仍然是0)
+                t->cancelled = ETIMEDOUT; // 如果超时时间到达并且事件尚未被处理，即 cancelled 仍然是0
                  
                 // 取消该文件描述符上的事件，并立即触发一次事件(即恢复被挂起的协程)
                 iom->cancelEvent(fd, (sylar::IOManager::Event)(event));
             }, winfo);
         }
 
-        // 2.add event -> callback is this fiber
-        // 将fd和event添加到 IOManager 中进行管理，IOManager 会监听这个文件描述符上的事件，当事件触发时，它会调度相应的协程来处理
+        // 2.将 fd 和 event 添加到 IOManager 中进行管理，IOManager 会监听这个文件描述符上的事件，当事件触发时，它会调度相应的协程来处理
         int rt = iom->addEvent(fd, (sylar::IOManager::Event)(event));
-        if(-1 == rt) // 如果rt为-1，说明 addEvent 失败，会打印一条调试信息 
+        if(-1 == rt) // 如果 rt 为-1，说明 addEvent 失败，会打印一条调试信息 
         {
             std::cout << hook_fun_name << " addEvent("<< fd << ", " << event << ")";
             if(timer) 
@@ -181,26 +172,23 @@ retry:
         } 
         else 
         {
-            //如果 addEvent 成功(rt为0)，当前协程会调用 yield()函数，将自己挂起，等待事件的触发 
+            //如果 addEvent 成功，当前协程会调用 yield() 函数，将自己挂起，让出执行权，等待事件的触发 
             sylar::Fiber::GetThis()->yield();
      
-            // 3.resume either by addEvent or cancelEvent
-            // 当协程被恢复(例如事件触发后)，它会继续执行yield()之后的代码 
-            // 如果之前设置了定时器(timer不为nullptr)，则在事件处理完毕后取消该定时器
-            // 取消定时器的原因是：该定时器的唯一作用是在IO操作超时时取消事件，如果事件已经正常处理完毕，那么就不需要定时器了
+            // 3.当协程被恢复（例如事件触发后），它会继续执行 yield() 之后的代码，如果之前设置了定时器，则在事件处理完毕后取消该定时器
             if(timer) 
             {
                 timer->cancel();
             }
             
             // 接下来检査 tinfo->cancelled 是否等于 ETIMEDOUT
-            // 如果等于，说明该操作因超时而被取消，因此设置 errno 为 ETIMEDOUT 并返回-1，表示操作失败
+            // 如果等于，说明该操作因超时而被取消，因此设置 errno 为 ETIMEDOUT 并返回 -1，表示操作失败
             if(tinfo->cancelled == ETIMEDOUT) 
             {
                 errno = tinfo->cancelled;
                 return -1;
             }
-            //如果没有超时，则跳转到 retry 标签，重新尝试这个操作
+            // 如果没有超时，则跳转到 retry 标签，重新尝试这个操作
             goto retry;
         }
     }
@@ -217,31 +205,32 @@ extern "C"{
 #undef XX 
 
 
-// 下面三个sleep函数的实现过程类似，目标都是为了将时间转换成毫秒，添加到超时时间堆中，然后让出协程，方便其他任务执行 
+// 下面三个 sleep 函数的实现过程类似，目的都是将时间转换成毫秒，添加到超时时间堆中，然后让出协程，方便其他任务执行 
 
-// 实现了一个协程版本的sleep，通过钩子机制拦截sleep的调用，并将其改为使用协程来实现非阻塞的休眠
-// 秒级休眠
+// 实现了一个协程版本的 sleep，通过 hook 机制拦截 sleep 的调用，并将其改为使用协程来实现非阻塞的休眠
 unsigned int sleep(unsigned int seconds)
 {
-	if(!sylar::t_hook_enable) // 如果钩子未启用，则调用原始的系统调用
+	if(!sylar::t_hook_enable) // 如果 hook 未启用，则调用原始的系统调用
 	{
 		return sleep_f(seconds);
 	}
 
-    // 获取当前正在执行的协程(Fiber)，并将其保存到fiber变量中
+    // 获取当前正在执行的协程，将其保存到 fiber 变量中
 	std::shared_ptr<sylar::Fiber> fiber = sylar::Fiber::GetThis();
     
+    // 获取 IOManager 实例
 	sylar::IOManager* iom = sylar::IOManager::GetThis();
 	
-    // 添加一个定时器来控制该协程
-	iom->addTimer(seconds*1000, [fiber, iom](){iom->scheduleLock(fiber, -1);}); // 转换为微秒
+    // 添加一个定时器模拟睡眠，注意要转换为微秒
+	iom->addTimer(seconds*1000, [fiber, iom](){iom->scheduleLock(fiber, -1);});  
 	
-    //挂起当前协程的执行，将控制权交还给调度器，等待下一次resume恢复
+    // 主动挂起当前协程的执行，将控制权交还给调度器，等待下一次 resume 恢复
 	fiber->yield();  
+
 	return 0;
 }
 
-// 微秒版sleep
+// 微秒版 sleep
 int usleep(useconds_t usec)
 {
 	if(!sylar::t_hook_enable)
@@ -249,17 +238,18 @@ int usleep(useconds_t usec)
 		return usleep_f(usec);
 	}
 
-    // 和上面的sleep类似
+    // 和上面的 sleep 类似
 	std::shared_ptr<sylar::Fiber> fiber = sylar::Fiber::GetThis();
 	sylar::IOManager* iom = sylar::IOManager::GetThis();
-	// add a timer to reschedule this fiber
+
 	iom->addTimer(usec/1000, [fiber, iom](){iom->scheduleLock(fiber);}); // 转换为毫秒
-	// wait for the next resume
+ 
 	fiber->yield();
+
 	return 0;
 }
 
-// 纳秒版sleep
+// 纳秒版 sleep
 int nanosleep(const struct timespec* req, struct timespec* rem)
 {
 	if(!sylar::t_hook_enable)
@@ -271,10 +261,11 @@ int nanosleep(const struct timespec* req, struct timespec* rem)
 
 	std::shared_ptr<sylar::Fiber> fiber = sylar::Fiber::GetThis();
 	sylar::IOManager* iom = sylar::IOManager::GetThis();
-	// add a timer to reschedule this fiber
+	 
 	iom->addTimer(timeout_ms, [fiber, iom](){iom->scheduleLock(fiber, -1);});
-	// wait for the next resume
+	 
 	fiber->yield();	
+    
 	return 0;
 }
 

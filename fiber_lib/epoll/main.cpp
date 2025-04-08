@@ -98,7 +98,7 @@ int main() {
                                            "\r\n"
                                            "1";
                     write(events[i].data.fd, response, strlen(response));
-                    epoll_ctl(epoll_fd,EPOLL_CTL_DEL,events[i].data.fd,NULL);//出现70007的错误再打开，或者试试-r命令
+                    epoll_ctl(epoll_fd,EPOLL_CTL_DEL,events[i].data.fd,NULL); // 出现70007的错误再打开，或者试试-r命令
                     // 关闭连接
                     close(events[i].data.fd);
                 }

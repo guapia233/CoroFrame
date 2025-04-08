@@ -1,4 +1,4 @@
 编译
 g++ *.cpp -std=c++17 -o test
 
-可在scheduler.cpp中开启/关闭debug信息
+可在 scheduler.cpp 中开启或关闭 debug 信息

@@ -52,31 +52,30 @@ class FdManager
 public:
 	FdManager();
 
-	// 获取指定文件描述符的 FdCtx 对象，如果 auto_create 为 true，表示在不存在时自动创建新的 FdCtx 对象
+	// 获取指定文件描述符的 FdCtx 对象，如果 auto_create 为 true，表示如果不存在就自动创建新的 FdCtx 对象
 	std::shared_ptr<FdCtx> get(int fd, bool auto_create = false);
 
 	// 删除指定文件描述符的 Fdctx 对象
 	void del(int fd);
 
 private:
-	std::shared_mutex m_mutex; // 用于保护对 m_datas 的访问，支持共享读锁和独占写锁
+	std::shared_mutex m_mutex; // 读写锁，用于保护对 m_datas 的访问，支持共享读锁和独占写锁
 	std::vector<std::shared_ptr<FdCtx>> m_datas; // 存储所有 Fdctx 对象的共享指针
 };
 
-// 实现了单例模式，确保一个类只有一个实例，并提供全局访问点 
-// 如下是懒汉模式 + 互斥锁维持线程安全 
+// 懒汉模式 + 互斥锁实现了单例模式，确保一个类只有一个实例，提供全局访问点，并保证线程安全
 template<typename T>
 class Singleton
 {
 private:
-    static T* instance; // 对外提供的实例
+    static T* instance; // 对外提供的实例对象
     static std::mutex mutex; // 互斥锁
 
 protected:
     Singleton() {}  
 
 public:
-    // Delete copy constructor and assignment operation
+    // 删除拷贝构造函数和拷贝赋值运算符，以防止 Singleton 类被复制或赋值从而创建出第二个实例 
     Singleton(const Singleton&) = delete;
     Singleton& operator=(const Singleton&) = delete;
 
@@ -84,13 +83,14 @@ public:
     static T* GetInstance() 
     {
         std::lock_guard<std::mutex> lock(mutex); // 加锁确保线程安全
-        if (instance == nullptr) 
+        if(instance == nullptr) 
         {
             instance = new T();
         }
         return instance;
     }
 
+	// 销毁实例
     static void DestroyInstance() 
     {
         std::lock_guard<std::mutex> lock(mutex);

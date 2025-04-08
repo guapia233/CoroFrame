@@ -21,7 +21,7 @@ private:
 	int m_fd; // 文件描述符的整数值
 
 	uint64_t m_recvTimeout = (uint64_t)-1; // 读事件的超时时间，默认为-1表示没有超时限制
-	uint64_t m_sendTimeout = (uint64_t)-1; // 读事件的超时时间，默认为-1表示没有超时限制
+	uint64_t m_sendTimeout = (uint64_t)-1; // 写事件的超时时间，默认为-1表示没有超时限制
 
 public:
 	FdCtx(int fd);

@@ -7,10 +7,9 @@
 
 
 namespace sylar{
+ 
 
-// 主要用于管理与文件描述符相关的状态和操作 
-// FdCtx类在用户态记录了fd的读写超时和非阻塞信息，其中非阻塞包括用户显式设置的非阻塞和hook内部设置的非阻塞
-// 区分这两种非阻塞可以有效应对用户对fd设置/获取NONBLOCK模式的情形 
+// FdCtx 类主要用于记录与文件描述符相关的状态和操作，比如 fd 的非阻塞信息，包括用户显式设置的非阻塞和 hook 内部设置的非阻塞
 class FdCtx : public std::enable_shared_from_this<FdCtx>
 {
 private:
@@ -41,10 +40,11 @@ public:
 	void setSysNonblock(bool v) {m_sysNonblock = v;}
 	bool getSysNonblock() const {return m_sysNonblock;}
 
-	// 设置和获取超时时间，type用于区分读事件和写事件，v表示毫秒时间
+	// 设置和获取超时时间，type 用于区分读事件和写事件，v表示毫秒时间
 	void setTimeout(int type, uint64_t v);
 	uint64_t getTimeout(int type);
 };
+
 
 // 用于管理 Fdctx 对象的集合，提供了对文件描述符上下文的访问和管理功能
 class FdManager
@@ -52,7 +52,7 @@ class FdManager
 public:
 	FdManager();
 
-	// 获取指定文件描述符的 Fdctx 对象，如果 auto_create 为 true，表示在不存在时自动创建新的 Fdctx 对象
+	// 获取指定文件描述符的 FdCtx 对象，如果 auto_create 为 true，表示在不存在时自动创建新的 FdCtx 对象
 	std::shared_ptr<FdCtx> get(int fd, bool auto_create = false);
 
 	// 删除指定文件描述符的 Fdctx 对象

@@ -265,64 +265,64 @@ int nanosleep(const struct timespec* req, struct timespec* rem)
 	iom->addTimer(timeout_ms, [fiber, iom](){iom->scheduleLock(fiber, -1);});
 	 
 	fiber->yield();	
-    
+
 	return 0;
 }
 
-// 对系统调用socket的封装，同时添加了一些额外的逻辑，用于处理自定义的钩子和文件描述符管理 
+// 对系统调用 socket 封装，添加了一些额外的逻辑，用于处理自定义的 hook 和文件描述符管理 
 int socket(int domain, int type, int protocol)
 {
-	if(!sylar::t_hook_enable) // 如果钩子未启用，则调用原始的系统调用
+	if(!sylar::t_hook_enable) // 如果 hook 未启用，则调用原始的系统调用
 	{
 		return socket_f(domain, type, protocol);
 	}	
 
-    //如果钩子启用了，则通过调用原始的socket函数创建套接字 
+    //如果 hook 启用了，则通过调用原始的 socket 函数创建套接字 
 	int fd = socket_f(domain, type, protocol);
-	if(fd==-1) // socket创建失败
+	if(fd == -1) // 如果 socket 创建失败
 	{
 		std::cerr << "socket() failed:" << strerror(errno) << std::endl;
 		return fd;
 	}
 
-    // 如果socket创建成功，会利用FdManager的文件描述符管理类来进行管理，判断是否在其管理的文件描述符中 
-    // 如果不在则扩展存储文件描述数组大小，并且利用 FdCtx 进行初始化判断是是不是套接字，是不是系统非阻塞模式
+    // 如果 socket 创建成功，会利用 FdManager 的文件描述符管理类来进行管理，判断是否在其管理的文件描述符中 
+    // 如果不在则扩展存储文件描述数组大小并自动创建 FdCtx 对象，并且通过 FdCtx 的初始化判断是是不是套接字，是不是系统非阻塞模式
 	sylar::FdMgr::GetInstance()->get(fd, true);
+
 	return fd;
 }
 
-// 用于在连接超时的情况下处理非阻塞套接字连接的实现，首先尝试使用钩子功能来捕获并管理连接请求的行为
+// 用于在连接超时的情况下处理非阻塞套接字连接的实现，首先尝试使用 hook 功能来捕获并管理连接请求的行为
 // 然后使用 IOManager 和 Timer 来管理超时机制，具体的逻辑实现上和 do_io 类似 
 int connect_with_timeout(int fd, const struct sockaddr* addr, socklen_t addrlen, uint64_t timeout_ms) 
 {
-    // 注意:如果没有启用hook或者不是一个套接字或者用户启用了非阻塞，都直接去调用connect系统调用
-    // 因为 connect_with_timeout 本身就是在connect系统调用基础上进行调用的 
-    if(!sylar::t_hook_enable) // 没启用hook
+    // 如果没有启用 hook 或者不是一个套接字或者用户已经启用了非阻塞，都直接去调用 connect 原始系统调用
+    if(!sylar::t_hook_enable) // 没启用 hook
     {
         return connect_f(fd, addr, addrlen);
     }
 
-    std::shared_ptr<sylar::FdCtx> ctx = sylar::FdMgr::GetInstance()->get(fd); // 获取文件描述符fd的上下文信息FdCtx
+    std::shared_ptr<sylar::FdCtx> ctx = sylar::FdMgr::GetInstance()->get(fd); // 获取该文件描述符的上下文信息对象 FdCtx
     
     // 检查文件描述符上下文是否存在或是否已关闭
     if(!ctx || ctx->isClosed()) 
     {
-        errno = EBADF; // EBAD表示一个无效的文件描述符
+        errno = EBADF; // 表示一个无效的文件描述符
         return -1;
     }
 
-    if(!ctx->isSocket()) // 文件描述符不是一个套接字
+    if(!ctx->isSocket()) // 如果该文件描述符不是一个套接字
     {
         return connect_f(fd, addr, addrlen);
     }
 
-    if(ctx->getUserNonblock()) // 用户设置了非阻塞
+    if(ctx->getUserNonblock()) // 如果用户设置了非阻塞
     {
 
         return connect_f(fd, addr, addrlen);
     }
 
-    // 尝试进行connect操作 
+    // 尝试进行 connect 操作 
     int n = connect_f(fd, addr, addrlen);
     if(n == 0) 
     {
@@ -339,7 +339,7 @@ int connect_with_timeout(int fd, const struct sockaddr* addr, socklen_t addrlen,
     std::shared_ptr<timer_info> tinfo(new timer_info); // 创建一个追踪定时器是否取消的对象
     std::weak_ptr<timer_info> winfo(tinfo); // 判断追踪定时器对象是否存在
 
-    // 检査是否设置了超时时间，如果 timeout_ms 不等于-1，则创建一个定时器
+    // 如果指定了超时时间，则创建一个定时器
     if(timeout_ms != (uint64_t)-1) 
     {
         // 添加一个定时器，当超时时间到达时，取消事件监听并设置 cancelled 状态 
@@ -352,11 +352,11 @@ int connect_with_timeout(int fd, const struct sockaddr* addr, socklen_t addrlen,
                 return;
             }
             t->cancelled = ETIMEDOUT; // 如果超时了但事件仍未处理
-            iom->cancelEvent(fd, sylar::IOManager::WRITE); // 将指定的fd的事件触发，将事件处理
+            iom->cancelEvent(fd, sylar::IOManager::WRITE); // 将指定的 fd 的事件触发，将事件处理
         }, winfo);
     }
 
-    // 为文件描述符fd添加一个写事件监听器，目的是为了上面的回调函数处理指定文件描述符
+    // 为文件描述符 fd 添加一个写事件监听器，目的是为了上面的回调函数处理指定文件描述符
     int rt = iom->addEvent(fd, sylar::IOManager::WRITE); 
     if(rt == 0) // 表示添加事件成功
     {
@@ -370,7 +370,7 @@ int connect_with_timeout(int fd, const struct sockaddr* addr, socklen_t addrlen,
 
         if(tinfo->cancelled) // 如果发生超时错误或者用户取消
         {
-            errno = tinfo->cancelled; // 赋值给errno，通过其查看具体错误原因 
+            errno = tinfo->cancelled; // 赋值给 errno，通过其查看具体错误原因 
             return -1;
         }
     } 
@@ -396,20 +396,20 @@ int connect_with_timeout(int fd, const struct sockaddr* addr, socklen_t addrlen,
     {
         return 0;
     } 
-    else // 如果有错误，设置errno并返回错误
+    else // 如果有错误，设置 errno 并返回错误
     {
         errno = error;
         return -1;
     }
 }
 
-// connect_with_timeout函数实际上是在原始connect系统调用基础上，增加了超时控制的逻辑
-// 在超时时间为-1时，表示不启用超时功能，也就是不会调用 addConditionTimer 函数放入到超时时间堆中
-// 等待超时唤醒 tickle 触发 IOManager::idle函数中epoll，而是只监听这个事件，这个事件没到就一直阻塞直到成功或失败
+// connect_with_timeout 函数实际上是在原始 connect 系统调用基础上，增加了超时控制的逻辑
+// 在超时时间为 -1 时，表示不启用超时功能，也就是不会调用 addConditionTimer 函数放入到超时时间堆中等待超
+// 时唤醒 idle 函数中的 epoll_wait，而是只监听这个事件，这个事件没到就一直阻塞直到成功或失败
 static uint64_t s_connect_timeout = -1; // 表示默认的连接超时时间
 int connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen)
 {
-    // 调用hook启用后的 connect_with_timeout 函数
+    // 调用 hook 启用后的 connect_with_timeout 函数
 	return connect_with_timeout(sockfd, addr, addrlen, s_connect_timeout);
 }
 
